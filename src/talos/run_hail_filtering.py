@@ -552,6 +552,30 @@ def annotate_category_de_novo(
             keep=False,
         )
 
+    # Record, before any of the substitutions below invent values, whether the caller
+    # actually made a call for each sample here. `bcftools merge -0` asserts 0/0 for every
+    # sample absent from its source VCF, with no GQ and no DP, and the DP substitution
+    # further down then hands that entry a fabricated depth of min_depth + 1. Without this
+    # field a parent that was never observed is indistinguishable from a real hom-ref call.
+    require_parent_evidence: bool = de_novo_config.get('require_parent_evidence', False)
+    min_parent_gq: int = de_novo_config.get('min_parent_gq', 0)
+    if require_parent_evidence:
+        logger.info(f'de novo calls require real parental data, GQ >= {min_parent_gq}')
+        # depth is the second half of the evidence, under whichever name this callset uses
+        if 'DP' in de_novo_matrix.entry:
+            has_depth = hl.is_defined(de_novo_matrix.DP)
+        elif 'AD' in de_novo_matrix.entry:
+            has_depth = hl.is_defined(de_novo_matrix.AD)
+        else:
+            logger.warning('Neither DP nor AD is present, parental evidence rests on GQ alone')
+            has_depth = hl.bool(True)
+
+        de_novo_matrix = de_novo_matrix.annotate_entries(
+            has_real_call=hl.is_defined(de_novo_matrix.GQ) & (de_novo_matrix.GQ >= min_parent_gq) & has_depth,
+        )
+    else:
+        de_novo_matrix = de_novo_matrix.annotate_entries(has_real_call=hl.bool(True))
+
     # takes the parsed pedigree data, writes it to a temporary file as a Strict 6-column format
     temp_ped_path = 'temp.ped'
     pedigree_data.write_pedigree(output_path=temp_ped_path)
@@ -617,20 +641,43 @@ def annotate_category_de_novo(
     dad = tm.father_entry
     mom = tm.mother_entry
 
+    # a parent's hom-ref only counts where the caller made a call for them. With
+    # require_parent_evidence off, has_real_call is True everywhere and these collapse away.
+    # coalesce so that a missing value can never satisfy the gate.
+    dad_called = hl.coalesce(dad.has_real_call, hl.bool(False))
+    mom_called = hl.coalesce(mom.has_real_call, hl.bool(False))
+
     # Updated for hemizygous child calls to not require a call in uninvolved parent
     # call.is_hom_ref is just `all(a == 0 for a in self._alleles)` - no ploidy check
     has_candidate_gt_configuration = (
-        (tm.locus.in_autosome_or_par() & kid.GT.is_het() & dad.GT.is_hom_ref() & mom.GT.is_hom_ref())
+        (
+            tm.locus.in_autosome_or_par()
+            & kid.GT.is_het()
+            & dad.GT.is_hom_ref()
+            & mom.GT.is_hom_ref()
+            & dad_called
+            & mom_called
+        )
         | (
             tm.locus.in_x_nonpar()
             & ~tm.is_female
             & ((kid.GT.is_hom_var()) | (kid.GT.is_het()))
             & dad.GT.is_hom_ref()
             & mom.GT.is_hom_ref()
+            & dad_called
+            & mom_called
         )
-        | (tm.locus.in_x_nonpar() & tm.is_female & kid.GT.is_het() & mom.GT.is_hom_ref() & dad.GT.is_hom_ref())
-        | (tm.locus.in_y_nonpar() & ((kid.GT.is_hom_var()) | (kid.GT.is_het())) & dad.GT.is_hom_ref())
-        | (tm.locus.in_mito() & kid.GT.is_hom_var() & mom.GT.is_hom_ref())
+        | (
+            tm.locus.in_x_nonpar()
+            & tm.is_female
+            & kid.GT.is_het()
+            & mom.GT.is_hom_ref()
+            & dad.GT.is_hom_ref()
+            & dad_called
+            & mom_called
+        )
+        | (tm.locus.in_y_nonpar() & ((kid.GT.is_hom_var()) | (kid.GT.is_het())) & dad.GT.is_hom_ref() & dad_called)
+        | (tm.locus.in_mito() & kid.GT.is_hom_var() & mom.GT.is_hom_ref() & mom_called)
     )
 
     # horribly simplified - we don't have the PL or AD for any WTs, so we're really fudging the main parts
