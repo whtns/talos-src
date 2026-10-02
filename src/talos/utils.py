@@ -571,6 +571,33 @@ def create_small_variant(
         elif isinstance(info[sam_cat], set):
             info[sam_cat] = list(info[sam_cat])
 
+    # Optional floor on the genotype quality of a *carrier*. Talos has no GQ gate outside
+    # de novo -- `min_all_sample_gq` lives inside annotate_category_de_novo and applies
+    # nowhere else -- so a variant called at GQ 3 in a proband carries a report with the
+    # same weight as one called at GQ 99. Defaults to 0 (off), so upstream behaviour is
+    # unchanged for anyone who does not set it.
+    #
+    # Applied to the carrier sets and to the sample-category lists together, so a sample
+    # dropped for poor quality cannot re-enter a report through a sample category.
+    #
+    # A carrier whose GQ is MISSING is kept, deliberately. cyvcf2 reports -1 both for a
+    # genotype the caller never emitted and for one that carries no GQ field, and dropping
+    # those would silently discard real calls from callers that omit GQ. Missing quality is
+    # not evidence of poor quality.
+    min_carrier_gq: int = config_retrieve(['ValidateMOI', 'min_carrier_gq'], 0)
+    if min_carrier_gq > 0:
+        low_gq: set[str] = {
+            sample
+            for sample, gq in zip(samples, var.gt_quals, strict=True)
+            if 0 <= gq < min_carrier_gq
+        }
+        if low_gq:
+            het_samples -= low_gq
+            hom_samples -= low_gq
+            for sam_cat in sample_categories:
+                if isinstance(info[sam_cat], list):
+                    info[sam_cat] = [s for s in info[sam_cat] if s not in low_gq]
+
     phased = get_phase_data(samples, var)
 
     # only keep these where the sample has a variant - the majority of samples have empty data, and we don't use it
@@ -597,6 +624,14 @@ def create_small_variant(
 
     transcript_consequences = extract_csq(csq_contents=info.pop('csq', ''))
 
+    # record which samples the caller actually made a call for at this locus. cyvcf2 returns
+    # -1 for a missing depth, which is what `bcftools merge -0` leaves behind when it asserts
+    # 0/0 for a sample that was absent from its source VCF. Built here, after the category
+    # check above, so rows that are discarded never pay for it.
+    evidenced_samples: set[str] = {
+        sample for sample, depth in zip(samples, var.gt_depths, strict=True) if depth >= 0
+    }
+
     return SmallVariant(
         coordinates=coordinates,
         info=info,
@@ -610,6 +645,7 @@ def create_small_variant(
         alt_depths=alt_depths,
         depths=depths,
         ab_ratios=ab_ratios,
+        evidenced_samples=evidenced_samples,
         transcript_consequences=transcript_consequences,
     )
 
