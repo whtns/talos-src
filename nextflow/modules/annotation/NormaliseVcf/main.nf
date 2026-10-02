@@ -21,6 +21,11 @@ process NormaliseVcf {
     	-f ${ref_genome} \
         -Ou ${vcf} \
         --no-version | \
+    bcftools sort \
+        -Ou \
+        -m 2G \
+        -T ./bcftools_sort_tmp \
+        - | \
     bcftools +fill-tags \
         -Oz \
         --no-version \
