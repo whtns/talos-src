@@ -36,6 +36,14 @@ workflow ANNOTATION {
     }
     ch_alphamissense_zip = channel.fromPath(params.alphamissense_zip, checkIfExists: true).first()
 
+    // Optional SpliceAI source. Upstream stopped emitting SpliceAI annotations, so
+    // RunHailFiltering's spliceai category can never fire without one (see patch 0004).
+    // Absent or unset, everything behaves exactly as before - the pilots and any cohort
+    // run predating the zip must keep working.
+    ch_spliceai_zip = (params.spliceai_zip && file(params.spliceai_zip).exists())
+        ? channel.fromPath(params.spliceai_zip, checkIfExists: true).first()
+        : channel.value([])
+
     def current_month = new java.util.Date().format('yyyy-MM')
     String panelapp_path = "${params.processed_annotations}/panelapp_${current_month}.json"
 
@@ -102,6 +110,7 @@ workflow ANNOTATION {
         NormaliseVcf.out,
         ch_gnomad_zip,
         ch_alphamissense_zip,
+        ch_spliceai_zip,
     )
 
     // annotate transcript consequences with bcftools csq
