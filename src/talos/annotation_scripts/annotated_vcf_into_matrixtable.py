@@ -179,6 +179,41 @@ def annotate_all_transcript_consequences(
     )
 
 
+def clear_alphamissense_sentinel(mt: hl.MatrixTable) -> hl.MatrixTable:
+    """Replaces echtvar's miss sentinel in `info.am_score` with a genuine missing value.
+
+    Same defect as the one `nest_spliceai_in_struct` handles, in a field nothing guarded.
+    echtvar writes `missing_value` into a numeric INFO field for every variant absent from
+    its source instead of leaving it missing, so `am_score` carries a large negative number
+    -- observed as -2147480064.0, which is the int32 sentinel -2147483648 after a round
+    trip through float32, so the test is a range check rather than an equality check
+    against any one value.
+
+    The paired string field `am_class` is genuinely missing on those rows, because echtvar
+    does leave strings missing. That disagreement is the tell: measured on the 1,392-sample
+    run, 609 of 874 reports (70%) carried a sentinel `am_score` while having no `am_class`
+    at all.
+
+    `am_score` is display-only -- `categorybooleanalphamissense` is driven by
+    `transcript_consequences.am_pathogenicity` (run_hail_filtering.py:387), which is gated
+    on `x.transcript == mt.info.am_transcript` and so was already missing on these rows --
+    but it reaches the report JSON and the HTML, where -2147480064.0 reads as a real score
+    of extreme benignity rather than as no data.
+
+    Applied before `annotate_all_transcript_consequences`, which is the only consumer of
+    `info.am_score`, so the sentinel cannot propagate into `am_pathogenicity` even if
+    `am_transcript` were populated on such a row.
+    """
+    return mt.annotate_rows(
+        info=mt.info.annotate(
+            am_score=hl.or_missing(
+                hl.is_defined(mt.info.am_score) & (mt.info.am_score >= 0),
+                mt.info.am_score,
+            ),
+        ),
+    )
+
+
 def nest_gnomad_in_struct(mt: hl.MatrixTable) -> hl.MatrixTable:
     """Tucks all gnomAD annotations into a hl.Struct"""
     return mt.annotate_rows(
@@ -187,6 +222,40 @@ def nest_gnomad_in_struct(mt: hl.MatrixTable) -> hl.MatrixTable:
             gnomad_AF=mt.info.gnomad_AF_joint,
             gnomad_AC_XY=mt.info.gnomad_AC_joint_XY,
             gnomad_HomAlt=mt.info.gnomad_HomAlt_joint,
+        ),
+    )
+
+
+def nest_spliceai_in_struct(mt: hl.MatrixTable) -> hl.MatrixTable:
+    """Tucks the SpliceAI annotations into the struct RunHailFiltering expects.
+
+    `annotate_category_spliceai` (run_hail_filtering.py) reads `mt.splice_ai.delta_score`
+    and `mt.splice_ai.splice_consequence`, and returns early when the `splice_ai` row field
+    is absent -- which it always was here, because upstream removed the annotation step
+    that used to create it. This rebuilds the field from the INFO keys written by the
+    SpliceAI echtvar source (scripts/make_spliceai_source.py).
+
+    A row with no SpliceAI entry is normalised to 0.0 / '' rather than left carrying
+    echtvar's miss sentinel. echtvar writes `missing_value` (-2147483648) into the INFO
+    field for every variant absent from the source rather than leaving it missing --
+    measured on a 207,482-row slice of chr1, where exactly the 17,242 rows present in the
+    source carried a real score and every other row carried the sentinel. The threshold
+    comparison would be safe either way, since -2.1e9 never clears 0.5, but
+    `splice_ai_delta` is surfaced in the report JSON and a reported variant with no
+    SpliceAI entry must not display -2147483648.
+    """
+    return mt.annotate_rows(
+        splice_ai=hl.struct(
+            delta_score=hl.if_else(
+                hl.is_defined(mt.info.spliceai_ds) & (mt.info.spliceai_ds >= 0),
+                hl.float64(mt.info.spliceai_ds),
+                hl.float64(0.0),
+            ),
+            splice_consequence=hl.if_else(
+                hl.is_defined(mt.info.spliceai_csq) & (mt.info.spliceai_csq != '.'),
+                hl.str(mt.info.spliceai_csq),
+                hl.str(''),
+            ),
         ),
     )
 
@@ -268,6 +337,12 @@ def main(
     ensg_dict = get_symbol_to_ensg_mapping(panelapp, as_hail=True)
     mane_dict = get_mane_annotations(mane_path=mane)
 
+    # AlphaMissense, only when the echtvar source was applied. Clear echtvar's miss
+    # sentinel before anything reads am_score, so neither the report JSON nor
+    # am_pathogenicity can carry -2147480064.0 as though it were a score.
+    if 'am_score' in mt.info:
+        mt = clear_alphamissense_sentinel(mt)
+
     # in a single loop, update alphamissense annotations, ENSG gene IDs, and MANE status/matched transcripts
     mt = annotate_all_transcript_consequences(mt, mane_dict, ensg_dict)
 
@@ -280,8 +355,14 @@ def main(
     # gather gnomAD annotations into a separate struct
     mt = nest_gnomad_in_struct(mt)
 
-    # drop the BCSQ field, and all individual gnomAD annotations
-    mt = mt.annotate_rows(info=mt.info.drop('BCSQ', *individual_gnomad_fields))
+    # SpliceAI, only when the echtvar source was applied - the fields are absent otherwise
+    # and every earlier MatrixTable in this project was built without them
+    spliceai_fields = [f for f in mt.info if f.startswith('spliceai_')]
+    if spliceai_fields:
+        mt = nest_spliceai_in_struct(mt)
+
+    # drop the BCSQ field, all individual gnomAD annotations, and the flat SpliceAI keys
+    mt = mt.annotate_rows(info=mt.info.drop('BCSQ', *individual_gnomad_fields, *spliceai_fields))
 
     mt.describe()
 
