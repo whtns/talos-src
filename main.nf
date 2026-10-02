@@ -21,8 +21,22 @@ include { ANNOTATION } from './nextflow/annotation'
 include { SV_ANNOTATION } from './nextflow/sv_annotation'
 include { TALOS } from './nextflow/talos'
 
-// analysis outputs are published to a per-run dated directory, ${cohort}_analysis_YYYYMMDD -
-// annotation products go to the undated ${cohort}_annotated, which is reused across cycles
+// Every product of a run -- MatrixTables, results JSON, HTML, labelled VCFs -- is published
+// to one directory per cohort, `${cohort}_outputs`, under the run's -output-dir.
+//
+// This is the ONE definition of that name. It used to be written twice: as a literal in the
+// `output {}` block below, and separately as `${cohort}_analysis_${runDate()}` in the path
+// stamped into the proposed next-cycle TSV. The two disagreed, so every TSV this workflow
+// has ever produced pointed `history` at a directory that does not exist -- which silently
+// disables `first_seen` / `evidence_last_updated`, the entire point of a reanalysis cadence,
+// because a missing history file reads the same as no previous run.
+//
+// Derive the name here rather than repeating it. The comment this replaced also described
+// two directories, `${cohort}_analysis_YYYYMMDD` and `${cohort}_annotated`, neither of which
+// this workflow has ever created.
+def cohortOutputDir(cohort) {
+    "${cohort}_outputs"
+}
 def runDate() {
     workflow.start.format(java.time.format.DateTimeFormatter.ofPattern('yyyyMMdd'))
 }
@@ -151,7 +165,7 @@ workflow {
 	// the published destinations, which don't exist until the run completes, so this is a proposal
 	// to be reviewed, not an output consumed by anything in this run
 	ch_next_input_tsv = TALOS.out.json
-		.map { cohort, results_json -> tuple(cohort, "${workflow.outputDir}/${cohort}_analysis_${runDate()}/${results_json.name}".toString()) }
+		.map { cohort, results_json -> tuple(cohort, "${workflow.outputDir}/${cohortOutputDir(cohort)}/${results_json.name}".toString()) }
 		.collect(flat: false)
 		.map { pairs -> nextInputTsv(file(params.input_tsv), pairs.collectEntries { pair -> pair }) }
 		.collectFile(name: "talos_input_${runDate()}.tsv")
@@ -173,24 +187,24 @@ output {
 	next_input_tsv {
 	}
 	mts {
-		path { id, _mts -> "${id}_outputs" }
+		path { id, _mts -> cohortOutputDir(id) }
 	}
 	html {
-		path { id, _html -> "${id}_outputs" }
+		path { id, _html -> cohortOutputDir(id) }
 	}
 	json {
-		path { id, _json -> "${id}_outputs" }
+		path { id, _json -> cohortOutputDir(id) }
 	}
 	panelapp {
-		path { id, _panelapp -> "${id}_outputs" }
+		path { id, _panelapp -> cohortOutputDir(id) }
 	}
 	labelled {
-		path { id, _labelled, _labelled_idx -> "${id}_outputs" }
+		path { id, _labelled, _labelled_idx -> cohortOutputDir(id) }
 	}
 	labelled_sv {
-		path { id, _labelled_sv, _labelled_sv_idx -> "${id}_outputs" }
+		path { id, _labelled_sv, _labelled_sv_idx -> cohortOutputDir(id) }
 	}
 	sv_annotated {
-		path { id, _vcf, _vcf_idx -> "${id}_outputs" }
+		path { id, _vcf, _vcf_idx -> cohortOutputDir(id) }
 	}
 }
