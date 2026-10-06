@@ -407,18 +407,37 @@ def annotate_category_high_impact(mt: hl.MatrixTable) -> hl.MatrixTable:
 
     critical_consequences = hl.set(config_retrieve(['RunHailFiltering', 'critical_csq'], CRITICAL_CSQ_DEFAULT))
 
+    # Optionally require the critical consequence to sit on a MANE transcript. Defaults to
+    # False, so upstream behaviour is unchanged for anyone who does not set it.
+    require_mane = config_retrieve(['RunHailFiltering', 'high_impact_require_mane'], False)
+
+    def carries_critical_csq(x):
+        hit = hl.len(critical_consequences.intersection(hl.set(x.consequence.split('&')))) > 0
+        if not require_mane:
+            return hit
+
+        # `mane_id` is set from the MANE table in annotated_vcf_into_matrixtable.py, and a
+        # transcript absent from that table gets MISSING_STRING -- which is '' in THAT
+        # module and 'missing' in THIS one. Comparing against this module's MISSING_STRING
+        # would therefore test the wrong literal on every row. `.contains('NM')` sidesteps
+        # the mismatch and is the test this file already uses in
+        # remove_variant_from_consideration: a MANE id is a RefSeq mRNA accession.
+        is_mane = x.mane_id.contains('NM')
+
+        # snRNA transcripts are exempt, and this exemption is load-bearing rather than
+        # defensive. MANE covers protein-coding transcripts only, so no snRNA gene is in it
+        # and a strict requirement would silently discard every snRNA report. This file
+        # already special-cases snRNA twice for the same reason (the biotype filter in
+        # remove_variant_from_consideration, and filter_by_consequence). RNU4-2 and RNU2-2
+        # carry reports in this cohort and are established dominant de novo
+        # neurodevelopmental genes, so dropping them would be a clear regression.
+        return hit & (is_mane | (x.biotype == 'snRNA'))
+
     # First check if we have any HIGH consequences
     return mt.annotate_rows(
         info=mt.info.annotate(
             categorybooleanhighimpact=hl.if_else(
-                (
-                    hl.len(
-                        mt.transcript_consequences.filter(
-                            lambda x: hl.len(critical_consequences.intersection(hl.set(x.consequence.split('&')))) > 0,
-                        ),
-                    )
-                    > 0
-                ),
+                (hl.len(mt.transcript_consequences.filter(carries_critical_csq)) > 0),
                 ONE_INT,
                 MISSING_INT,
             ),
