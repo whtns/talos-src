@@ -2,7 +2,7 @@ process ValidateMOI {
     container params.container
 
     input:
-        tuple val(cohort), path(labelled_vcf), path(labelled_vcf_index), path(sv), path(mito), path(panelapp), path(pedigree), path(talos_config), path(previous_results)
+        tuple val(cohort), path(labelled_vcf), path(labelled_vcf_index), path(sv), path(mito), path(strs), path(panelapp), path(pedigree), path(talos_config), path(previous_results)
         val timestamp
 
     output:
@@ -14,6 +14,10 @@ process ValidateMOI {
 		def mito_idx = mito ? "tabix $mito" : ''
 		def sv_arg = sv ? "--labelled_sv $sv" : ''
 		def sv_idx = sv ? "tabix $sv" : ''
+		// validate_moi reads the STR VCF by contig (utils.py, `variant_sources['str'](contig)`),
+		// so it needs an index for the same reason the SV and mito VCFs do
+		def str_arg = strs ? "--str $strs" : ''
+		def str_idx = strs ? "tabix $strs" : ''
 
         """
         set -euo pipefail
@@ -22,11 +26,12 @@ process ValidateMOI {
 
         ${mito_idx}
         ${sv_idx}
+        ${str_idx}
 
         python -m talos.validate_moi \
             --labelled_vcf ${labelled_vcf} \
             --panelapp ${panelapp} \
             --pedigree ${pedigree} \
-            --output ${cohort}_results_${timestamp}.json $history_arg $mito_arg $sv_arg
+            --output ${cohort}_results_${timestamp}.json $history_arg $mito_arg $sv_arg $str_arg
         """
 }

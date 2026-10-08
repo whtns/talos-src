@@ -60,7 +60,7 @@ workflow TALOS {
     // UnifiedPanelAppParser
     ch_panel_app_inputs = StartupChecks.out
         .join(ch_mts)
-        .map { cohort, check_file, _mts, pedigree, config, _history, _ext, _seqr, _mito ->
+        .map { cohort, check_file, _mts, pedigree, config, _history, _ext, _seqr, _mito, _strs ->
             tuple(cohort, check_file, config, pedigree)
         }
 
@@ -73,7 +73,7 @@ workflow TALOS {
     ch_run_hail_inputs = ch_mts
         .join(UnifiedPanelAppParser.out)
         .join(StartupChecks.out)
-        .map { cohort, mts, pedigree, config, _history, _ext, _seqr, _mito, panelapp_data, check_file ->
+        .map { cohort, mts, pedigree, config, _history, _ext, _seqr, _mito, _strs, panelapp_data, check_file ->
             tuple(cohort, mts, panelapp_data, check_file, pedigree, config)
         }
 
@@ -88,7 +88,7 @@ workflow TALOS {
     ch_run_hail_sv_inputs = ch_sv_annotated
         .join(UnifiedPanelAppParser.out)
         .join(ch_mts)
-        .map { cohort, sv_vcf, sv_idx, panelapp_data, _mts, pedigree, config, _history, _ext, _seqr, _mito ->
+        .map { cohort, sv_vcf, sv_idx, panelapp_data, _mts, pedigree, config, _history, _ext, _seqr, _mito, _strs ->
             tuple(cohort, sv_vcf, sv_idx, panelapp_data, pedigree, config)
         }
 
@@ -116,7 +116,7 @@ workflow TALOS {
     ch_mito_joined = ch_mts
         .join(UnifiedPanelAppParser.out)
         .join(StartupChecks.out)
-        .map { cohort, _mts, pedigree, config, _history, _ext, _seqr, mito, panelapp_data, check_file ->
+        .map { cohort, _mts, pedigree, config, _history, _ext, _seqr, mito, _strs, panelapp_data, check_file ->
           tuple(cohort, mito, panelapp_data, pedigree, config)
     }
 
@@ -150,8 +150,8 @@ workflow TALOS {
         .join(ch_mts)
         .join(ch_mito_resolved)
         .join(ch_sv_resolved)
-        .map { cohort, labelled_vcf, labelled_vcf_index, panelapp_out, _mts, pedigree, config, history, _ext, _seqr, _mito, anno_mito, anno_sv ->
-            tuple(cohort, labelled_vcf, labelled_vcf_index, anno_sv, anno_mito, panelapp_out, pedigree, config, history)
+        .map { cohort, labelled_vcf, labelled_vcf_index, panelapp_out, _mts, pedigree, config, history, _ext, _seqr, _mito, strs, anno_mito, anno_sv ->
+            tuple(cohort, labelled_vcf, labelled_vcf_index, anno_sv, anno_mito, strs, panelapp_out, pedigree, config, history)
         }
 
     ValidateMOI(
@@ -163,7 +163,7 @@ workflow TALOS {
     ch_hpo_inputs = ValidateMOI.out
         .join(UnifiedPanelAppParser.out)
         .join(ch_mts)
-        .map { cohort, talos_result_json, panelapp_data, _mts, _pedigree, config, _history, _ext, _seqr, _mito ->
+        .map { cohort, talos_result_json, panelapp_data, _mts, _pedigree, config, _history, _ext, _seqr, _mito, _strs ->
             tuple(cohort, talos_result_json, panelapp_data, config)
         }
 
@@ -178,7 +178,7 @@ workflow TALOS {
     ch_create_html_inputs = HPOFlagging.out
         .join(UnifiedPanelAppParser.out)
         .join(ch_mts)
-        .map { cohort, result_json, panelapp_data, _mts, _pedigree, config, _history, ext, seqr, _mito ->
+        .map { cohort, result_json, panelapp_data, _mts, _pedigree, config, _history, ext, seqr, _mito, _strs ->
             tuple(cohort, result_json, panelapp_data, config, ext, seqr)
         }
 

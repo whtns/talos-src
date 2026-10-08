@@ -84,6 +84,10 @@ workflow {
 			row.ext_ids ? file(row.ext_ids, checkIfExists: true) : [],
 			row.seqr_map ? file(row.seqr_map, checkIfExists: true) : [],
 			row.mito ? file(row.mito, checkIfExists: true) : [],
+			// an STR 'joint call' (REPCN / DISEASE_DETAILS per sample). Passed straight to
+			// ValidateMOI like `mito`: there is no STR annotation workflow, the input is
+			// expected to arrive already annotated
+			row.str ? file(row.str, checkIfExists: true) : [],
 		) }
 
 	// the SV path is entirely optional, and only wired up if the input TSV declares an `sv` column.
